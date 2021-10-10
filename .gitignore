@@ -128,6 +128,6 @@ dmypy.json
 # Pyre type checker
 .pyre/
 *.csv
-*.ipynb
+*.ipynb_checkpoints
 03.SavedModels/*
 02.Code/wandb
