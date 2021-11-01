@@ -1,6 +1,7 @@
 import pandas as pd
 import os
 import argparse
+import numpy as np
 
 
 # +
@@ -39,6 +40,7 @@ def main():
         df = test_df.merge(df,how = 'left',on = ['id'])
         df['pressure'] = df['pressure'].fillna(-1)
     if args.postprocessing:
+        print('doing postprocesing')
         df = post_processing(df)
     df.to_csv('submission.csv',index = False)
     os.system(f'kaggle competitions submit -c ventilator-pressure-prediction -f submission.csv -m "{args.model_experiment}_{args.comment}"')

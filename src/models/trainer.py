@@ -96,16 +96,18 @@ class Trainer:
                 tk0.set_postfix(Eval_Loss=losses.avg)
                  # Saving outputs:
                 outputs.append(output.cpu().detach().numpy())
-                
+                targets.append(data['pressure'].cpu().detach().numpy())
         outputs = np.vstack(outputs)
         targets = np.vstack(targets)
+        print(outputs.shape,targets.shape)
         return losses.avg,outputs,targets
     
     def fit(self,train = None, valid = None):
+        
         seed_everything(self.config.seed)
         train_dataset = VentilatorDataset(train,self.config.cols)
         valid_dataset = VentilatorDataset(valid,self.config.cols)
-        inspiratory_ids = valid[valid['u_out'] == 0].index.values
+        #inspiratory_ids = valid[valid['u_out'] == 0].index.values
         
         train_loader = torch.utils.data.DataLoader(train_dataset,
                                                    batch_size  = self.config.batch_size,
@@ -118,7 +120,10 @@ class Trainer:
                                                    num_workers = self.config.num_workers,
                                                    shuffle     = False,
                                                    pin_memory  = True)
-        
+        if self.config.previous_path is not None:
+            print('Loading Previous Model:',os.path.join(self.config.previous_path,f'fold_{self.config.fold}','model.pt'))
+            self.model.load_state_dict(torch.load(os.path.join(self.config.previous_path,f'fold_{self.config.fold}','model.pt')))
+            
         self.model.to(self.config.device)
         self.criterion.to(self.config.device)
         es = EarlyStopping (patience = self.config.early_stopping, mode = self.config.mode, delta = 0)
@@ -136,18 +141,23 @@ class Trainer:
             if (self.config.scheduler_params['step_on']=='epoch')&(self.config.scheduler_params['name'] == 'Plateu'):
                 self.scheduler.step(valid_metrics[self.config.scheduler_params['step_metric']])
             # Compute Metric
-            score =  mean_absolute_error(valid_targets[inspiratory_ids], valid_outputs[inspiratory_ids])
-            valid_metrics = {'valid_loss':valid_loss,'score':score}
+            #score =  mean_absolute_error(valid_targets[inspiratory_ids], valid_outputs[inspiratory_ids])
+            valid_metrics = {'valid_loss':valid_loss}
             
             if self.config.logging:
                 self.run.log({
                     "train_loss" : train_loss,
                     "valid_loss" : valid_loss,
-                    "score"      : score,
+                    #"score"      : score,
                     "epoch"      : epoch,
                 })
                 
             os.makedirs(self.config.output_path,exist_ok = True)
+            if self.config.save_epoch is not None:
+                if ((epoch + 1)%self.config.save_epoch == 0)&(epoch != 0):
+                    print(f'Save model at epoch {epoch+1}')
+                    torch.save(self.model.state_dict(),os.path.join(self.config.output_path,f'model_epoch_{epoch+1}.pt'))
+
             es(valid_metrics[self.config.scheduler_params['step_metric']], self.model,os.path.join(self.config.output_path,'model.pt'))
             if es.early_stop:
                 print('Meet early stopping')

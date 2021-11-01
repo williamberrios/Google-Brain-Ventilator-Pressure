@@ -14,6 +14,8 @@ from models.trainer import Trainer
 from models.lstm import Model_LSTM
 from sklearn.metrics import mean_absolute_error
 import wandb
+import argparse
+
 DATA_PATH = '../01.Data'
 DEBUG = False
 os.environ['WANDB_SILENT']="True"
@@ -47,8 +49,9 @@ def feat_eng(df):
     # Add Feature engineering df:
     df['area'] = df['time_step'] * df['u_in']
     df['area'] = df.groupby('breath_id')['area'].cumsum()
-    
     df['u_in_cumsum'] = (df['u_in']).groupby(df['breath_id']).cumsum()
+    df['cross']= df['u_in']*df['u_out']
+    df['cross2']= df['time_step']*df['u_out']
     
     df['u_in_lag1'] = df.groupby('breath_id')['u_in'].shift(1)
     df['u_out_lag1'] = df.groupby('breath_id')['u_out'].shift(1)
@@ -70,24 +73,36 @@ def feat_eng(df):
     
     df['breath_id__u_in__max'] = df.groupby(['breath_id'])['u_in'].transform('max')
     df['breath_id__u_out__max'] = df.groupby(['breath_id'])['u_out'].transform('max')
+    df['breath_id__u_in__diffmax'] = df.groupby(['breath_id'])['u_in'].transform('max') - df['u_in']
+    df['breath_id__u_in__diffmean'] = df.groupby(['breath_id'])['u_in'].transform('mean') - df['u_in']
+    df['breath_id__u_in__diffmax'] = df.groupby(['breath_id'])['u_in'].transform('max') - df['u_in']
+    df['breath_id__u_in__diffmean'] = df.groupby(['breath_id'])['u_in'].transform('mean') - df['u_in']
     
     df['u_in_diff1'] = df['u_in'] - df['u_in_lag1']
     df['u_out_diff1'] = df['u_out'] - df['u_out_lag1']
     df['u_in_diff2'] = df['u_in'] - df['u_in_lag2']
     df['u_out_diff2'] = df['u_out'] - df['u_out_lag2']
-    
-    df['breath_id__u_in__diffmax'] = df.groupby(['breath_id'])['u_in'].transform('max') - df['u_in']
-    df['breath_id__u_in__diffmean'] = df.groupby(['breath_id'])['u_in'].transform('mean') - df['u_in']
-    
-    df['breath_id__u_in__diffmax'] = df.groupby(['breath_id'])['u_in'].transform('max') - df['u_in']
-    df['breath_id__u_in__diffmean'] = df.groupby(['breath_id'])['u_in'].transform('mean') - df['u_in']
-    
     df['u_in_diff3'] = df['u_in'] - df['u_in_lag3']
     df['u_out_diff3'] = df['u_out'] - df['u_out_lag3']
     df['u_in_diff4'] = df['u_in'] - df['u_in_lag4']
     df['u_out_diff4'] = df['u_out'] - df['u_out_lag4']
-    df['cross']= df['u_in']*df['u_out']
-    df['cross2']= df['time_step']*df['u_out']
+    
+    ####################### New features ############################### 
+    df['time_step_diff'] = df.groupby('breath_id')['time_step'].diff().fillna(0)
+    
+    df[["15_in_sum","15_in_min","15_in_max","15_in_mean"]] = (df\
+                                                              .groupby('breath_id')['u_in']\
+                                                              .rolling(window=15,min_periods=1)\
+                                                              .agg({"15_in_sum":"sum",
+                                                                    "15_in_min":"min",
+                                                                    "15_in_max":"max",
+                                                                    "15_in_mean":"mean"
+                                                               })\
+                                                               .reset_index(level=0,drop=True))
+    
+    
+    ##############################################################
+    
     df['R_indx'] = df['R']
     df['C_indx'] = df['C']
     df['R'] = df['R'].astype(str)
@@ -117,15 +132,15 @@ def compute_mae_filtered(df,target = 'pressure',preds = 'oof'):
 
 
 # %%
-def run_kfold():
-    cfg       = Config()
+def run_kfold(args):
+    cfg       = Config(args)
     run_folds = cfg.run_folds 
     if DEBUG:
-        train_df = pd.read_csv(os.path.join(DATA_PATH,'train_folds.csv'),nrows=80*100)
-        test_df  = pd.read_csv(os.path.join(DATA_PATH,'test.csv'),nrows=80*100)
+        train_df = feat_eng(pd.read_csv(os.path.join(DATA_PATH,args.dataset),nrows=80*100))
+        test_df  = feat_eng(pd.read_csv(os.path.join(DATA_PATH,'test.csv'),nrows=80*100))
     else:
         
-        train_df = feat_eng(pd.read_csv(os.path.join(DATA_PATH,'train_folds.csv')))   
+        train_df = feat_eng(pd.read_csv(os.path.join(DATA_PATH,args.dataset)))   
         test_df  = feat_eng(pd.read_csv(os.path.join(DATA_PATH,'test.csv')))
         
     if cfg.RC is not None:
@@ -163,6 +178,7 @@ def run_kfold():
         cfg.output_path = os.path.join(cfg.output_dir,cfg.experiment_name,f'fold_{fold}')
         # Training Dataset
         train     = train_df[train_df['fold']!=fold].reset_index(drop = True)
+        
         # Valid Dataset
         valid     = train_df[train_df['fold']==fold]
         valid_index = valid.index.to_list()
@@ -198,56 +214,76 @@ def run_kfold():
 
 
 # %%
-class Config():
-    # =========== General Parameters ========
-    seed = 42
-    logging = True
-    run_folds       = [0,1,2,3,4]
-    max_length = None
-    RC         = [None,None]
-    init_weights = 'xavier'
-    # ======== Model Parameters =============
-    input_size  = -1
-    hidden_size = 400
-    num_layers  = 4
-    dropout     = 0.0
-    bidirectional = True
-    logit_dim     = 128#50
-    # ========= Training Parameters =========
-    epochs         = 200
-    device         = 'cuda'
-    lr             = 1e-3
-    batch_size     = 2**10
-    num_workers    = 72 
-    sc_name        = 'Robust'
-    # ======== Early stopping  =============
-    early_stopping = 50#20
-    mode           = 'min'
-    # ======== Loss Parameters =============
-    loss_params    = {'name':'MAE_FILTERED'}        
-    # ======== Optimizer Parameters ========
-    optimizer_params = {'name':'Adam',
-                        'WD'  : 1e-6} #0
+def parse_args():
+    parser = argparse.ArgumentParser(description="Google Brain Kaggle")
+    parser.add_argument("--folds", nargs="+",type=int, default=[0])
+    parser.add_argument('--dataset', type=str, default='train_folds.csv')
+    args = parser.parse_args()
+    return args
 
-    # ======= Scheduler Parameters =========
-    # Mode: ['batch','epoch']
-    #scheduler_params = {'name'     : 'Plateu',
-    #                    'step_on'  : 'epoch',
-    #                    'patience' :  8,#5
-    #                    'step_metric': 'valid_loss'}
-    scheduler_params = {'name'     : 'CosineAnnealingLR',
-                        'step_on'  : 'epoch',
-                        'step_metric': None,
-                        'min_lr':1e-6,
-                        'T_max': 200}
-    # ======= Logging and Saving Parameters ===
-    project_name    = 'Ventilator-Kaggle'
-    experiment_name = 'baseline_lstm_v9'
-    fold            = None
-    output_dir      = '../03.SavedModels' # Relative to trainer path
+
+# %%
+class Config:
+    def __init__(self,args):
+        # =========== General Parameters ========
+        self.seed = 42
+        self.logging = True
+        self.run_folds       = args.folds
+        self.max_length = None
+        self.RC         = [None,None]
+        self.init_weights = 'xavier'
+        self.scaler_layer = False
+        self.previous_path =  '../03.SavedModels/baseline_lstm_v15/'
+        self.save_epoch    =  50 # None
+        # ======== Model Parameters =============
+        self.input_size  = -1
+        self.hidden_size = 400
+        self.num_layers  = 4
+        self.dropout     = 0
+        self.bidirectional = True
+        self.logit_dim     = 128#50
+        self.layer_normalization = False
+        # ========= Training Parameters =========
+        self.epochs         = 200
+        self.device         = 'cuda'
+        self.lr             = 1e-3
+        self.batch_size     = 2**9
+        self.num_workers    = 72 
+        self.sc_name        = 'Robust'
+        # ======== Early stopping  =============
+        self.early_stopping = 400#20
+        self.mode           = 'min'
+        # ======== Loss Parameters =============
+        self.loss_params    = {'name':'MAE_FILTERED'}        
+        # ======== Optimizer Parameters ========
+        self.optimizer_params = {'name':'Adam',
+                                 'WD'  : 1e-6} #0
+
+        # ======= Scheduler Parameters =========
+        # Mode: ['batch','epoch']
+        #scheduler_params = {'name'     : 'Plateu',
+        #                    'step_on'  : 'epoch',
+        #                    'patience' :  8,#5
+        #                    'step_metric': 'valid_loss'}
+        #scheduler_params = {'name'     : 'CosineAnnealingLR',
+        #                    'step_on'  : 'epoch',
+        #                    'step_metric': 'valid_loss',
+        #                    'min_lr':1e-7,
+        #                    'T_max': 400}
+        self.scheduler_params = {'name'     : 'CosineAnnealingWarmRestarts',
+                                 'step_on'  : 'epoch',
+                                 'step_metric': 'valid_loss',
+                                 'min_lr':1e-6,
+                                 'T_0': 50}
+        # ======= Logging and Saving Parameters ===
+        self.project_name    = 'Ventilator-Kaggle'
+        self.experiment_name = 'baseline_lstm_v18'
+        self.fold            = None
+        self.output_dir      = '../03.SavedModels' # Relative to trainer path
 
 
 # %%
 if __name__ == '__main__':
-    run_kfold()
+    args = parse_args()
+    run_kfold(args)
 

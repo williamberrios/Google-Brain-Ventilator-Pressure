@@ -1,5 +1,47 @@
 import torch 
 import torch.nn as nn
+import pandas as pd
+import numpy as np
+
+'''
+train_df = pd.read_csv('../../01.Data/train.csv')
+all_pressure = sorted(train_df.pressure.unique())
+PRESSURE_MIN = np.min(all_pressure)
+PRESSURE_MAX = np.max(all_pressure)
+PRESSURE_STEP = all_pressure[1] - all_pressure[0]
+'''
+
+
+# +
+class my_round_func(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, input):
+        return torch.round(input)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        grad_input = grad_output.clone()
+        return grad_input
+
+class ScaleLayer(nn.Module):
+    def __init__(self):
+        super(ScaleLayer, self).__init__()
+        self.min = PRESSURE_MIN
+        self.max = PRESSURE_MAX
+        self.step = PRESSURE_STEP
+        self.my_round_func = my_round_func()
+
+    def forward(self, inputs):
+        steps = inputs.add(-self.min).divide(self.step)
+        int_steps = self.my_round_func.apply(steps)
+        rescaled_steps = int_steps.multiply(self.step).add(self.min)
+        clipped = torch.clamp(rescaled_steps, self.min, self.max)
+        return clipped
+
+
+
+# +
+
 class Model_LSTM(nn.Module):
     def __init__(self,cfg):
         super().__init__()
@@ -11,9 +53,22 @@ class Model_LSTM(nn.Module):
                             dropout     = cfg.dropout,
                             bidirectional = cfg.bidirectional)
             
-        self.logits = nn.Sequential(nn.Linear(cfg.hidden_size * self._get_lstmmul(cfg), cfg.logit_dim),
-                                    nn.ReLU(),
-                                    nn.Linear(cfg.logit_dim,1))
+        if cfg.layer_normalization == False:
+            print('No layer Normalization at the head')
+            self.logits = nn.Sequential(nn.Linear(cfg.hidden_size * self._get_lstmmul(cfg), cfg.logit_dim),
+                                        nn.ReLU(),
+                                        nn.Linear(cfg.logit_dim,1))
+        elif cfg.layer_normalization:
+            print('Yes/layer Normalization at the head')
+            self.logits = nn.Sequential(nn.Linear(cfg.hidden_size * self._get_lstmmul(cfg),cfg.hidden_size * self._get_lstmmul(cfg)),
+                                        nn.LayerNorm(cfg.hidden_size * self._get_lstmmul(cfg)),   
+                                        nn.ReLU(),
+                                        nn.Linear(cfg.hidden_size * self._get_lstmmul(cfg),1))
+        
+        if cfg.scaler_layer:
+            self.logits = nn.Sequential(self.logits,
+                                        ScaleLayer())
+            
         if cfg.init_weights is not None:
             self._init_weights_(cfg.init_weights)
     
@@ -62,6 +117,8 @@ class Model_LSTM(nn.Module):
                 raise Exception('Initialization not implemented')
 
 
+# -
+
 if __name__ == '__main__':
     class Config(object): 
         input_size  = 5
@@ -71,8 +128,11 @@ if __name__ == '__main__':
         bidirectional = True
         logit_dim     = 100
         init_weights  = True
+        layer_normalization = False
+        init_weights  = 'xavier'
+        scaler_layer  = True 
     cfg   = Config()
     model =  Model_LSTM(cfg)
     inputs = torch.randn(5,10,cfg.input_size)
     print(f'Output shape: {model(inputs).shape}')
-
+    print(model)
