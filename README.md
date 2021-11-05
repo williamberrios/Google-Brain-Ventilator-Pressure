@@ -73,5 +73,5 @@ Overall code structure is as follows:
 |Model1 checkpoint - 600|0.1351|0.1375|
 |Model1 checkpoint - 400|0.1378|0.1400|
 | ------|-----------|-----------| 
-|**Median Ensemble**|**0.1336**|**0.1312**|
+|**Median Ensemble**|**0.1312**|**0.1336**|
 
