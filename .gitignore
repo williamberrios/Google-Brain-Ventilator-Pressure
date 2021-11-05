@@ -131,3 +131,8 @@ dmypy.json
 *.ipynb_checkpoints
 03.SavedModels/*
 02.Code/wandb
+02.Code/02.BaselineTesting.ipynb
+02.Code/03.ExploreResults.ipynb
+02.Code/Ensemble.ipynb
+02.Code/Stacking.ipynb
+02.Code/submit.py
